@@ -6,14 +6,14 @@ module Devise
     # Redirects to sign_in page if it's not authenticated
     class LdapAuthenticatable < Authenticatable
       def valid?
-        valid_controller? && valid_params? && mapping.to.respond_to?(:authenticate_with_ldap)
+        (valid_for_http_auth? || (valid_controller? && valid_for_params_auth?)) && mapping.to.respond_to?(:authenticate_with_ldap)
       end
 
       # Authenticate a user based on login and password params, returning to warden
       # success and the authenticated user if everything is okay. Otherwise redirect
       # to sign in page.
       def authenticate!
-        if resource = mapping.to.authenticate_with_ldap(params[scope])
+        if resource = mapping.to.authenticate_with_ldap(authentication_hash.merge(:password => password))
           success!(resource)
         else
           fail(:invalid)
