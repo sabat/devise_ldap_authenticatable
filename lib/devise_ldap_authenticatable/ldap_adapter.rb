@@ -46,7 +46,13 @@ module Devise
       attr_reader :ldap, :login
 
       def initialize(params = {})
-        ldap_config = YAML.load(ERB.new(File.read(::Devise.ldap_config || "#{Rails.root}/config/ldap.yml")).result)[Rails.env]
+        # bug found: this only loads YAML from *environment* section, although the
+        # ldap.yml file has an example outside of the environment section.
+        # Fix is to merge in the hash inside 'authorizations' from general section.
+        f = File.read(::Devise.ldap_config || "#{Rails.root}/config/ldap.yml")
+        ldap_config = YAML.load(ERB.new(f).result)[Rails.env]
+        ldap_config.merge!( YAML.load(ERB.new(f).result)['authorizations'] ) unless ldap_config.has_key?('authorizations')
+
         ldap_options = params
         ldap_options[:encryption] = :simple_tls if ldap_config["ssl"]
 
@@ -145,8 +151,17 @@ module Devise
         admin_ldap = LdapConnect.admin
 
         DeviseLdapAuthenticatable::Logger.send("Getting groups for #{dn}")
-        filter = Net::LDAP::Filter.eq("uniqueMember", dn)
-        admin_ldap.search(:filter => filter, :base => @group_base).collect(&:dn)
+        # filter = Net::LDAP::Filter.eq("uniqueMember", dn)
+        # this is AD-specific (samaccountname) and should be configurable
+        filter = Net::LDAP::Filter.eq('samaccountname', dn.sub(/@.+$/, '')) & Net::LDAP::Filter.eq("objectcategory", "Person")
+        # admin_ldap.search(:filter => filter, :base => @ldap.base).collect(&:dn)
+        # The above search does not return the groups. You need to look in 'memberof'.
+        # This may be AD-specific; I'm not sure.
+        if entries = admin_ldap.search(:filter => filter, :base => @ldap.base)
+          if entry = entries[0]
+            entry[:memberof].collect { |g| g.sub(/.*?CN=(.*?),.*/, '\1') }
+          end
+        end
       end
       
       private
